@@ -100,7 +100,7 @@
 
   window.onload = function() {
     billModal = new bootstrap.Modal(document.getElementById('billModal'));
-    const saved = localStorage.getItem('outstanding_parties_v2');
+    const saved = localStorage.getItem('outstanding_parties_v3');
     if (saved) {
       consolidatedParties = JSON.parse(saved);
       document.getElementById('fileStatus').innerText = 'Loaded from cache';
@@ -109,39 +109,54 @@
     }
   };
 
-  // Direct Date Converter: Handles Excel Serial Numbers (like 46140) accurately
+  // Convert any format (M/D/YY, Excel serial, ISO) strictly to DD/MM/YYYY
   function convertToDateString(val) {
     if (!val && val !== 0) return '-';
 
-    // Agar Date object hai
+    // 1. Agar Date object hai
     if (val instanceof Date) {
-      const d = String(val.getDate()).padStart(2, '0');
-      const m = String(val.getMonth() + 1).padStart(2, '0');
+      const d = val.getDate();
+      const m = val.getMonth() + 1;
       const y = val.getFullYear();
       return `${d}/${m}/${y}`;
     }
 
-    // Number clean karo (agar string me "46140" ho)
-    const num = parseFloat(String(val).replace(/[^0-9.]/g, ''));
-    
-    // Agar Excel date number hai (e.g. 40000 - 60000)
-    if (!isNaN(num) && num > 30000 && num < 70000) {
-      // Excel epoch date calculation: 1899-12-30
-      const utcDays = Math.floor(num - 25569);
-      const dateObj = new Date(utcDays * 86400 * 1000);
-      const d = String(dateObj.getUTCDate()).padStart(2, '0');
-      const m = String(dateObj.getUTCMonth() + 1).padStart(2, '0');
-      const y = dateObj.getUTCFullYear();
-      return `${d}/${m}/${y}`;
+    const str = String(val).replace(/\x00/g, '').trim();
+
+    // 2. Agar "4/28/26" ya "04/28/2026" (M/D/YY) format me ho
+    if (str.includes('/')) {
+      const parts = str.split('/');
+      if (parts.length === 3) {
+        const m = parseInt(parts[0], 10);
+        const d = parseInt(parts[1], 10);
+        let y = parseInt(parts[2], 10);
+        if (y < 100) y += 2000; // 26 -> 2026
+        if (!isNaN(d) && !isNaN(m) && !isNaN(y)) {
+          return `${d}/${m}/${y}`;
+        }
+      }
     }
 
-    // Agar already DD/MM/YYYY ya YYYY-MM-DD string hai
-    const str = String(val).replace(/\x00/g, '').trim();
+    // 3. Agar "YYYY-MM-DD" format me ho
     if (str.includes('-')) {
       const parts = str.split('T')[0].split('-');
       if (parts.length === 3 && parts[0].length === 4) {
-        return `${parts[2]}/${parts[1]}/${parts[0]}`;
+        const y = parseInt(parts[0], 10);
+        const m = parseInt(parts[1], 10);
+        const d = parseInt(parts[2], 10);
+        return `${d}/${m}/${y}`;
       }
+    }
+
+    // 4. Agar Excel serial number ho (e.g. 46140)
+    const num = parseFloat(str.replace(/[^0-9.]/g, ''));
+    if (!isNaN(num) && num > 30000 && num < 70000) {
+      const utcDays = Math.floor(num - 25569);
+      const dateObj = new Date(utcDays * 86400 * 1000);
+      const d = dateObj.getUTCDate();
+      const m = dateObj.getUTCMonth() + 1;
+      const y = dateObj.getUTCFullYear();
+      return `${d}/${m}/${y}`;
     }
 
     return str || '-';
@@ -161,7 +176,8 @@
         const data = new Uint8Array(evt.target.result);
         const workbook = XLSX.read(data, { type: 'array' });
         const firstSheetName = workbook.SheetNames[0];
-        const rows = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheetName], { defval: '', raw: true });
+        // raw: false ensures formatting like m/d/yy is captured, which convertToDateString converts to d/m/yyyy
+        const rows = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheetName], { defval: '', raw: false });
 
         processRawRows(rows);
         document.getElementById('fileStatus').innerText = file.name + ' (' + rows.length + ' rows)';
@@ -223,9 +239,10 @@
     // Array me convert aur highest outstanding se sort
     consolidatedParties = Object.values(map).sort((a, b) => b.totalBal - a.totalBal);
 
-    // Save to LocalStorage (v2 key to clear old cache)
+    // Save to LocalStorage (v3 key to force fresh storage)
     localStorage.removeItem('outstanding_parties');
-    localStorage.setItem('outstanding_parties_v2', JSON.stringify(consolidatedParties));
+    localStorage.removeItem('outstanding_parties_v2');
+    localStorage.setItem('outstanding_parties_v3', JSON.stringify(consolidatedParties));
 
     populateOperators();
     renderParties();
