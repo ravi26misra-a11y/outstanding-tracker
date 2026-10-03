@@ -67,16 +67,18 @@
     <!-- Filter & Operator Switcher -->
     <div class="card shadow-sm mb-3">
       <div class="card-body p-3">
-        <div class="row g-2">
-          <div class="col-12 col-sm-4">
+        <div class="row g-2 align-items-end">
+          
+          <div class="col-12 col-sm-3">
             <label class="form-label small fw-bold mb-1">Select Operator</label>
             <select id="operatorSelect" class="form-select form-select-sm" onchange="renderParties()">
               <option value="">-- Sabhi Parties --</option>
             </select>
           </div>
-          <div class="col-12 col-sm-4">
+
+          <div class="col-12 col-sm-3">
             <label class="form-label small fw-bold mb-1">Status Filter</label>
-            <select id="statusFilter" class="form-select form-select-sm" onchange="renderParties()">
+            <select id="statusFilter" class="form-select form-select-sm" onchange="handleStatusFilterChange()">
               <option value="">-- All Statuses --</option>
               <option value="COMMITTED">COMMITTED (Promise to Pay)</option>
               <option value="CALL_NOT_RECEIVED">CALL NOT RECEIVED</option>
@@ -85,10 +87,24 @@
               <option value="PENDING">PENDING (No Follow-up Yet)</option>
             </select>
           </div>
-          <div class="col-12 col-sm-4">
+
+          <!-- Promise Date Filter (Shows when COMMITTED is selected or can be used independently) -->
+          <div class="col-12 col-sm-3" id="ptpDateFilterCol">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <label class="form-label small fw-bold mb-0 text-success">PTP Date</label>
+              <button class="btn btn-xs py-0 px-1 btn-outline-success" style="font-size: 0.7rem;" onclick="setFilterDateToday()">Today</button>
+            </div>
+            <div class="input-group input-group-sm">
+              <input type="date" id="ptpDateFilter" class="form-control form-control-sm" onchange="renderParties()">
+              <button class="btn btn-outline-secondary" type="button" onclick="clearFilterDate()" title="Clear Date"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+          </div>
+
+          <div class="col-12 col-sm-3">
             <label class="form-label small fw-bold mb-1">Search Party / Code</label>
             <input type="text" id="searchInput" class="form-control form-control-sm" placeholder="Search name or code..." onkeyup="renderParties()">
           </div>
+
         </div>
 
         <!-- Quick Summary -->
@@ -434,9 +450,37 @@
     });
   }
 
+  // Handle Status change in Filter: auto-suggest COMMITTED if date is clicked
+  function handleStatusFilterChange() {
+    const status = document.getElementById('statusFilter').value;
+    if (status !== 'COMMITTED') {
+      document.getElementById('ptpDateFilter').value = '';
+    }
+    renderParties();
+  }
+
+  // Quick "Today" Filter Button
+  function setFilterDateToday() {
+    const today = new Date();
+    const y = today.getFullYear();
+    const m = String(today.getMonth() + 1).padStart(2, '0');
+    const d = String(today.getDate()).padStart(2, '0');
+    const todayStr = `${y}-${m}-${d}`;
+
+    document.getElementById('statusFilter').value = 'COMMITTED';
+    document.getElementById('ptpDateFilter').value = todayStr;
+    renderParties();
+  }
+
+  function clearFilterDate() {
+    document.getElementById('ptpDateFilter').value = '';
+    renderParties();
+  }
+
   function renderParties() {
     const selectedOp = document.getElementById('operatorSelect').value.toLowerCase();
     const selectedStatus = document.getElementById('statusFilter').value;
+    const selectedDate = document.getElementById('ptpDateFilter').value; // format YYYY-MM-DD
     const query = document.getElementById('searchInput').value.toLowerCase();
     const container = document.getElementById('partiesContainer');
     container.innerHTML = '';
@@ -451,7 +495,17 @@
       const partyStatus = currentNote ? currentNote.status : 'PENDING';
       const matchStatus = !selectedStatus || (partyStatus === selectedStatus);
 
-      return matchOp && matchSearch && matchStatus;
+      // Match PTP Date filter
+      let matchDate = true;
+      if (selectedDate) {
+        if (!currentNote || currentNote.status !== 'COMMITTED' || !currentNote.commitDate) {
+          matchDate = false;
+        } else {
+          matchDate = (currentNote.commitDate === selectedDate);
+        }
+      }
+
+      return matchOp && matchSearch && matchStatus && matchDate;
     });
 
     let totalSum = 0;
@@ -475,7 +529,13 @@
       let statusBadge = `<span class="badge bg-light text-muted border">No Follow-up</span>`;
       if (note) {
         if (note.status === 'COMMITTED') {
-          statusBadge = `<span class="badge bg-success badge-status"><i class="fa-regular fa-calendar-check me-1"></i>PTP: ${note.commitDate || 'No Date'}</span>`;
+          // Format date for display
+          let formattedPtpDate = note.commitDate;
+          if (note.commitDate && note.commitDate.includes('-')) {
+            const dp = note.commitDate.split('-');
+            formattedPtpDate = `${dp[2]}/${dp[1]}/${dp[0]}`;
+          }
+          statusBadge = `<span class="badge bg-success badge-status"><i class="fa-regular fa-calendar-check me-1"></i>PTP: ${formattedPtpDate || 'No Date'}</span>`;
         } else if (note.status === 'CALL_NOT_RECEIVED') {
           statusBadge = `<span class="badge bg-warning text-dark badge-status"><i class="fa-solid fa-phone-slash me-1"></i>Not Received</span>`;
         } else if (note.status === 'SERIOUS_ACTION') {
