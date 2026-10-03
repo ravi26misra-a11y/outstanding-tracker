@@ -15,21 +15,25 @@
     .card-party { border-left: 4px solid #0d6efd; border-radius: 10px; background: #fff; margin-bottom: 12px; }
     .amt-badge { font-size: 1.15rem; font-weight: 700; color: #dc3545; }
     .btn-circle { width: 40px; height: 40px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+    .nav-pills .nav-link.active { background-color: #0d6efd; font-weight: bold; }
   </style>
 </head>
 <body class="p-2 p-md-3">
 
-<div class="container-fluid" style="max-width: 750px;">
+<div class="container-fluid" style="max-width: 850px;">
 
-  <!-- Header -->
+  <!-- Header Bar -->
   <div class="card shadow-sm mb-3">
     <div class="card-body p-3">
-      <div class="d-flex justify-content-between align-items-center">
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
         <div>
-          <h5 class="fw-bold mb-0 text-primary"><i class="fa-solid fa-file-invoice-dollar me-2"></i>Recovery Dashboard</h5>
+          <h5 class="fw-bold mb-0 text-primary"><i class="fa-solid fa-file-invoice-dollar me-2"></i>Recovery Portal</h5>
           <small class="text-muted" id="fileStatus">No file loaded</small>
         </div>
-        <div>
+        <div class="d-flex gap-2">
+          <button class="btn btn-sm btn-dark fw-bold" onclick="openAdminView()">
+            <i class="fa-solid fa-user-shield me-1"></i> Admin View
+          </button>
           <label class="btn btn-sm btn-primary fw-bold mb-0">
             <i class="fa-solid fa-file-arrow-up me-1"></i> Upload XLS
             <input type="file" id="fileInput" accept=".xls,.xlsx" style="display: none;" onchange="handleFileUpload(event)">
@@ -39,44 +43,133 @@
     </div>
   </div>
 
-  <!-- Filter & Operator Switcher -->
-  <div class="card shadow-sm mb-3">
-    <div class="card-body p-3">
-      <div class="row g-2">
-        <div class="col-12 col-sm-6">
-          <label class="form-label small fw-bold mb-1">Select Operator</label>
-          <select id="operatorSelect" class="form-select form-select-sm" onchange="renderParties()">
-            <option value="">-- Sabhi Parties (Admin) --</option>
-          </select>
-        </div>
-        <div class="col-12 col-sm-6">
-          <label class="form-label small fw-bold mb-1">Search Party / Code</label>
-          <input type="text" id="searchInput" class="form-control form-control-sm" placeholder="Search by name or code..." onkeyup="renderParties()">
-        </div>
-      </div>
+  <!-- Main View Tabs: Operator Mode vs Admin Mode -->
+  <ul class="nav nav-pills nav-fill mb-3 bg-white p-1 rounded shadow-sm" id="viewTabs" role="tablist">
+    <li class="nav-item">
+      <button class="nav-link active" id="tab-operator" onclick="switchView('operator')">
+        <i class="fa-solid fa-list-check me-1"></i> Operator Follow-Up
+      </button>
+    </li>
+    <li class="nav-item">
+      <button class="nav-link" id="tab-admin" onclick="openAdminView()">
+        <i class="fa-solid fa-chart-pie me-1"></i> Admin Insights
+      </button>
+    </li>
+  </ul>
 
-      <!-- Quick Summary -->
-      <div class="row g-2 mt-2 pt-2 border-top text-center">
-        <div class="col-6">
-          <small class="text-muted d-block">Total Parties</small>
-          <span class="fw-bold fs-6" id="totalCount">0</span>
+  <!-- 1. OPERATOR VIEW CONTAINER -->
+  <div id="operatorViewSection">
+    <!-- Filter & Operator Switcher -->
+    <div class="card shadow-sm mb-3">
+      <div class="card-body p-3">
+        <div class="row g-2">
+          <div class="col-12 col-sm-6">
+            <label class="form-label small fw-bold mb-1">Select Operator</label>
+            <select id="operatorSelect" class="form-select form-select-sm" onchange="renderParties()">
+              <option value="">-- Sabhi Parties --</option>
+            </select>
+          </div>
+          <div class="col-12 col-sm-6">
+            <label class="form-label small fw-bold mb-1">Search Party / Code</label>
+            <input type="text" id="searchInput" class="form-control form-control-sm" placeholder="Search by name or code..." onkeyup="renderParties()">
+          </div>
         </div>
-        <div class="col-6">
-          <small class="text-muted d-block">Total Outstanding</small>
-          <span class="fw-bold fs-6 text-danger" id="totalAmt">₹0</span>
+
+        <!-- Quick Summary -->
+        <div class="row g-2 mt-2 pt-2 border-top text-center">
+          <div class="col-6">
+            <small class="text-muted d-block">Total Parties</small>
+            <span class="fw-bold fs-6" id="totalCount">0</span>
+          </div>
+          <div class="col-6">
+            <small class="text-muted d-block">Total Outstanding</small>
+            <span class="fw-bold fs-6 text-danger" id="totalAmt">₹0</span>
+          </div>
         </div>
       </div>
     </div>
+
+    <!-- Parties List Container -->
+    <div id="partiesContainer"></div>
+  </div>
+
+  <!-- 2. ADMIN VIEW CONTAINER -->
+  <div id="adminViewSection" class="d-none">
+    
+    <!-- Overall Stats Cards -->
+    <div class="row g-2 mb-3">
+      <div class="col-4">
+        <div class="card shadow-sm text-center p-2 bg-white">
+          <small class="text-muted">Total Balance</small>
+          <div class="fw-bold text-danger fs-6" id="admTotalAmt">₹0</div>
+        </div>
+      </div>
+      <div class="col-4">
+        <div class="card shadow-sm text-center p-2 bg-white">
+          <small class="text-muted">Parties Count</small>
+          <div class="fw-bold text-dark fs-6" id="admTotalParties">0</div>
+        </div>
+      </div>
+      <div class="col-4">
+        <div class="card shadow-sm text-center p-2 bg-white">
+          <small class="text-muted">Active Operators</small>
+          <div class="fw-bold text-primary fs-6" id="admTotalOps">0</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Operator-Wise Comparison Table -->
+    <div class="card shadow-sm mb-3">
+      <div class="card-header bg-white py-2 d-flex justify-content-between align-items-center">
+        <h6 class="fw-bold mb-0 text-dark"><i class="fa-solid fa-users me-2 text-primary"></i>Operator Performance & Allocation</h6>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-sm table-bordered table-striped mb-0 align-middle">
+            <thead class="table-dark">
+              <tr>
+                <th>Operator</th>
+                <th class="text-center">Parties</th>
+                <th class="text-center">Bills</th>
+                <th class="text-end">Pending Amount</th>
+                <th class="text-center">Action</th>
+              </tr>
+            </thead>
+            <tbody id="adminOperatorTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Top 10 Defaulters / Highest Outstanding -->
+    <div class="card shadow-sm mb-3">
+      <div class="card-header bg-white py-2">
+        <h6 class="fw-bold mb-0 text-danger"><i class="fa-solid fa-triangle-exclamation me-2"></i>Top 10 Highest Outstanding Parties</h6>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0 align-middle">
+            <thead class="table-light">
+              <tr>
+                <th>#</th>
+                <th>Party Name</th>
+                <th>Operator</th>
+                <th class="text-end">Amount</th>
+              </tr>
+            </thead>
+            <tbody id="adminTopPartiesBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
   </div>
 
   <!-- Loading State -->
   <div id="loader" class="text-center py-4 d-none">
     <div class="spinner-border text-primary" role="status"></div>
-    <div class="small text-muted mt-2">Processing Excel Data...</div>
+    <div class="small text-muted mt-2">Processing Data...</div>
   </div>
-
-  <!-- Parties List Container -->
-  <div id="partiesContainer"></div>
 
 </div>
 
@@ -97,6 +190,7 @@
 <script>
   let consolidatedParties = [];
   let billModal = null;
+  let isAdminAuthenticated = false;
 
   window.onload = function() {
     billModal = new bootstrap.Modal(document.getElementById('billModal'));
@@ -109,60 +203,38 @@
     }
   };
 
-  // Convert any format (M/D/YY, Excel serial, ISO) strictly to DD/MM/YYYY
+  // Convert Date into DD/M/YYYY
   function convertToDateString(val) {
     if (!val && val !== 0) return '-';
-
-    // 1. Agar Date object hai
     if (val instanceof Date) {
-      const d = val.getDate();
-      const m = val.getMonth() + 1;
-      const y = val.getFullYear();
-      return `${d}/${m}/${y}`;
+      return `${val.getDate()}/${val.getMonth() + 1}/${val.getFullYear()}`;
     }
-
     const str = String(val).replace(/\x00/g, '').trim();
-
-    // 2. Agar "4/28/26" ya "04/28/2026" (M/D/YY) format me ho
     if (str.includes('/')) {
       const parts = str.split('/');
       if (parts.length === 3) {
         const m = parseInt(parts[0], 10);
         const d = parseInt(parts[1], 10);
         let y = parseInt(parts[2], 10);
-        if (y < 100) y += 2000; // 26 -> 2026
-        if (!isNaN(d) && !isNaN(m) && !isNaN(y)) {
-          return `${d}/${m}/${y}`;
-        }
+        if (y < 100) y += 2000;
+        if (!isNaN(d) && !isNaN(m) && !isNaN(y)) return `${d}/${m}/${y}`;
       }
     }
-
-    // 3. Agar "YYYY-MM-DD" format me ho
     if (str.includes('-')) {
       const parts = str.split('T')[0].split('-');
       if (parts.length === 3 && parts[0].length === 4) {
-        const y = parseInt(parts[0], 10);
-        const m = parseInt(parts[1], 10);
-        const d = parseInt(parts[2], 10);
-        return `${d}/${m}/${y}`;
+        return `${parseInt(parts[2], 10)}/${parseInt(parts[1], 10)}/${parseInt(parts[0], 10)}`;
       }
     }
-
-    // 4. Agar Excel serial number ho (e.g. 46140)
     const num = parseFloat(str.replace(/[^0-9.]/g, ''));
     if (!isNaN(num) && num > 30000 && num < 70000) {
-      const utcDays = Math.floor(num - 25569);
-      const dateObj = new Date(utcDays * 86400 * 1000);
-      const d = dateObj.getUTCDate();
-      const m = dateObj.getUTCMonth() + 1;
-      const y = dateObj.getUTCFullYear();
-      return `${d}/${m}/${y}`;
+      const dateObj = new Date(Math.floor(num - 25569) * 86400 * 1000);
+      return `${dateObj.getUTCDate()}/${dateObj.getUTCMonth() + 1}/${dateObj.getUTCFullYear()}`;
     }
-
     return str || '-';
   }
 
-  // 1. Direct File Upload Parser
+  // File Upload Parser
   function handleFileUpload(e) {
     const file = e.target.files[0];
     if (!file) return;
@@ -176,7 +248,6 @@
         const data = new Uint8Array(evt.target.result);
         const workbook = XLSX.read(data, { type: 'array' });
         const firstSheetName = workbook.SheetNames[0];
-        // raw: false ensures formatting like m/d/yy is captured, which convertToDateString converts to d/m/yyyy
         const rows = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheetName], { defval: '', raw: false });
 
         processRawRows(rows);
@@ -190,7 +261,7 @@
     reader.readAsArrayBuffer(file);
   }
 
-  // 2. Data Cleaning & Party Aggregation
+  // Data Processing
   function processRawRows(rows) {
     const map = {};
 
@@ -203,7 +274,6 @@
       const address = clean(r.c_address1);
       const balAmt = parseFloat(String(r.n_bal_amt).replace(/,/g, '')) || 0;
       
-      // Clean Bill No (remove trailing .0)
       let invNo = clean(r.n_srno);
       if (invNo.endsWith('.0')) invNo = invNo.slice(0, -2);
 
@@ -212,7 +282,6 @@
 
       if (!code || balAmt <= 0) return;
 
-      // Extract 10-digit mobile number
       const phoneMatches = address.match(/\d{10}/g);
       const primaryPhone = phoneMatches ? phoneMatches[0] : '';
 
@@ -220,7 +289,7 @@
         map[code] = {
           code: code,
           name: partyFullName,
-          operator: operator,
+          operator: operator || 'UNASSIGNED',
           phone: primaryPhone,
           totalBal: 0,
           bills: []
@@ -236,29 +305,125 @@
       });
     });
 
-    // Array me convert aur highest outstanding se sort
     consolidatedParties = Object.values(map).sort((a, b) => b.totalBal - a.totalBal);
-
-    // Save to LocalStorage (v3 key to force fresh storage)
-    localStorage.removeItem('outstanding_parties');
-    localStorage.removeItem('outstanding_parties_v2');
     localStorage.setItem('outstanding_parties_v3', JSON.stringify(consolidatedParties));
 
     populateOperators();
     renderParties();
+    if (isAdminAuthenticated) renderAdminDashboard();
   }
 
-  // 3. Dropdown list bharo
+  // Dropdown Operator List
   function populateOperators() {
     const ops = [...new Set(consolidatedParties.map(p => p.operator).filter(Boolean))].sort();
     const select = document.getElementById('operatorSelect');
-    select.innerHTML = '<option value="">-- Sabhi Parties (Admin) --</option>';
+    select.innerHTML = '<option value="">-- Sabhi Parties --</option>';
     ops.forEach(op => {
       select.innerHTML += `<option value="${op}">FOLLOW UP: ${op}</option>`;
     });
   }
 
-  // 4. Render Party Cards
+  // View Switcher (Tab toggle)
+  function switchView(mode) {
+    if (mode === 'operator') {
+      document.getElementById('operatorViewSection').classList.remove('d-none');
+      document.getElementById('adminViewSection').classList.add('d-none');
+      document.getElementById('tab-operator').classList.add('active');
+      document.getElementById('tab-admin').classList.remove('active');
+    } else {
+      document.getElementById('operatorViewSection').classList.add('d-none');
+      document.getElementById('adminViewSection').classList.remove('d-none');
+      document.getElementById('tab-operator').classList.remove('active');
+      document.getElementById('tab-admin').classList.add('active');
+      renderAdminDashboard();
+    }
+  }
+
+  // Admin PIN Protection (Default PIN: 1234)
+  function openAdminView() {
+    if (!isAdminAuthenticated) {
+      const pin = prompt('Admin Access PIN dalein:');
+      if (pin === '1234') {
+        isAdminAuthenticated = true;
+        switchView('admin');
+      } else {
+        alert('Galat PIN! Sirf owner access kar sakte hain.');
+      }
+    } else {
+      switchView('admin');
+    }
+  }
+
+  // Render Admin Insights Dashboard
+  function renderAdminDashboard() {
+    if (consolidatedParties.length === 0) return;
+
+    let overallSum = 0;
+    let totalBills = 0;
+    const opStats = {};
+
+    consolidatedParties.forEach(p => {
+      overallSum += p.totalBal;
+      totalBills += p.bills.length;
+      const op = p.operator;
+
+      if (!opStats[op]) {
+        opStats[op] = { name: op, count: 0, bills: 0, amount: 0 };
+      }
+      opStats[op].count += 1;
+      opStats[op].bills += p.bills.length;
+      opStats[op].amount += p.totalBal;
+    });
+
+    const opList = Object.values(opStats).sort((a, b) => b.amount - a.amount);
+
+    document.getElementById('admTotalAmt').innerText = '₹' + Math.round(overallSum).toLocaleString('en-IN');
+    document.getElementById('admTotalParties').innerText = consolidatedParties.length;
+    document.getElementById('admTotalOps').innerText = opList.length;
+
+    // Operator comparison table
+    const tbody = document.getElementById('adminOperatorTableBody');
+    tbody.innerHTML = '';
+    opList.forEach(op => {
+      tbody.innerHTML += `
+        <tr>
+          <td class="fw-bold">${op.name}</td>
+          <td class="text-center">${op.count}</td>
+          <td class="text-center">${op.bills}</td>
+          <td class="text-end fw-bold text-danger">₹${Math.round(op.amount).toLocaleString('en-IN')}</td>
+          <td class="text-center">
+            <button class="btn btn-xs btn-outline-primary py-0 px-2" onclick="filterByAdminOp('${op.name}')">View List</button>
+          </td>
+        </tr>
+      `;
+    });
+
+    // Top 10 Defaulters
+    const topTbody = document.getElementById('adminTopPartiesBody');
+    topTbody.innerHTML = '';
+    consolidatedParties.slice(0, 10).forEach((p, i) => {
+      topTbody.innerHTML += `
+        <tr>
+          <td><span class="badge bg-secondary">${i + 1}</span></td>
+          <td class="text-truncate" style="max-width: 250px;">
+            <div class="fw-bold text-dark">${p.name}</div>
+            <small class="text-muted">${p.code}</small>
+          </td>
+          <td><span class="badge bg-light text-dark border">${p.operator}</span></td>
+          <td class="text-end fw-bold text-danger">₹${Math.round(p.totalBal).toLocaleString('en-IN')}</td>
+        </tr>
+      `;
+    });
+  }
+
+  // Admin click to jump to operator list
+  function filterByAdminOp(opName) {
+    switchView('operator');
+    document.getElementById('operatorSelect').value = opName;
+    renderParties();
+  }
+
+  // Render Party Cards for Operator
   function renderParties() {
     const selectedOp = document.getElementById('operatorSelect').value.toLowerCase();
     const query = document.getElementById('searchInput').value.toLowerCase();
@@ -328,7 +493,7 @@
     });
   }
 
-  // 5. Bill Details Modal Show Karna
+  // Show Invoices Breakdown
   function showBills(idx) {
     const party = consolidatedParties[idx];
     document.getElementById('billModalTitle').innerText = party.name + ' (' + party.code + ')';
