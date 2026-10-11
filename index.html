@@ -3,9 +3,6 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-  <meta http-equiv="Pragma" content="no-cache">
-  <meta http-equiv="Expires" content="0">
   <title>Outstanding Recovery Portal</title>
   <!-- Bootstrap 5 CSS -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -61,7 +58,7 @@
           <button class="btn btn-sm btn-outline-danger" id="btnNotification" onclick="requestNotificationPermission()" title="Enable Mobile Pop-up">
             <i class="fa-regular fa-bell"></i> Alerts
           </button>
-          <button class="btn btn-sm btn-outline-secondary" onclick="fetchCloudData(true)" title="Force Refresh Data">
+          <button class="btn btn-sm btn-outline-secondary" onclick="fetchCloudData()" title="Refresh Data">
             <i class="fa-solid fa-arrows-rotate"></i>
           </button>
           <button class="btn btn-sm btn-dark fw-semibold" onclick="openAdminView()">
@@ -159,6 +156,7 @@
             </div>
           </div>
 
+          <!-- FEATURE 3: SORT PRIORITY (HIGHEST OUTSTANDING VS OLDEST BILL) -->
           <div class="col-12 col-sm-3">
             <label class="form-label small fw-semibold mb-1 text-muted">Sort Queue By</label>
             <select id="sortPrioritySelect" class="form-select form-select-sm fw-semibold text-primary" onchange="renderParties()">
@@ -220,14 +218,14 @@
       </div>
     </div>
 
-    <!-- WHATSAPP TEMPLATE EDITOR -->
+    <!-- FEATURE 2: WHATSAPP TEMPLATE EDITOR -->
     <div class="card mb-3 border-0 shadow-sm">
       <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
         <div class="d-flex align-items-center">
           <i class="fa-brands fa-whatsapp text-success me-2 fs-5"></i>
           <h6 class="fw-bold mb-0 text-dark">Customer WhatsApp Message Template</h6>
         </div>
-        <small class="text-muted">Real-time Cloud Sync</small>
+        <small class="text-muted">Dynamic Personalization</small>
       </div>
       <div class="card-body p-3">
         <div class="mb-2">
@@ -302,7 +300,7 @@
       </div>
     </div>
 
-    <!-- ADMIN PIN CHANGE SETTINGS -->
+    <!-- FEATURE 1: ADMIN PIN CHANGE SETTINGS -->
     <div class="card mb-3 border-0 shadow-sm">
       <div class="card-header bg-white py-3 border-bottom d-flex align-items-center">
         <i class="fa-solid fa-lock text-warning me-2 fs-5"></i>
@@ -369,3 +367,874 @@
       <div class="modal-body p-2" id="billModalBody"></div>
     </div>
   </div>
+</div>
+
+<!-- Modal: Update Follow-Up Note -->
+<div class="modal fade" id="noteModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header py-2 bg-primary text-white">
+        <h6 class="modal-title fw-bold" id="noteModalTitle">Log Follow-up Note</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-3">
+        <input type="hidden" id="modalPartyCode">
+        
+        <div class="mb-3">
+          <label class="form-label small fw-bold">Call Status / Action Category</label>
+          <select id="modalStatusSelect" class="form-select form-select-sm" onchange="toggleCommitDateField()">
+            <option value="COMMITTED">COMMITTED (Promise to Pay)</option>
+            <option value="CALL_NOT_RECEIVED">CALL NOT RECEIVED (Ringing / Switched Off)</option>
+            <option value="SERIOUS_ACTION">SERIOUS ACTION REQUIRED (Stop Supply / Legal)</option>
+            <option value="DISPUTE">BILL / RATE DISPUTE</option>
+            <option value="OTHER">OTHER REMARKS</option>
+          </select>
+        </div>
+
+        <div class="mb-3" id="commitDateBox">
+          <label class="form-label small fw-bold text-success"><i class="fa-regular fa-calendar-check me-1"></i>Promise Date</label>
+          <input type="date" id="modalCommitDate" class="form-control form-control-sm">
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label small fw-bold">Remarks / Conversation Detail</label>
+          <textarea id="modalRemarkText" class="form-control form-control-sm" rows="3" placeholder="Party ne kya bola..."></textarea>
+        </div>
+
+        <button type="button" class="btn btn-primary btn-sm w-100 fw-bold" id="btnSaveNote" onclick="saveFollowUpNote()">
+          <i class="fa-solid fa-cloud-arrow-up me-1"></i> Save to Cloud
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+  const CLOUD_API_URL = "https://api.npoint.io/7ce8984a8f01ce60b7cb";
+
+  const DEFAULT_TEMPLATE = "Namaskar Sir, aapke account me total ₹{balance} outstanding pending hai (Oldest Bill Date: {oldest_date}). Kripya payment update karein-FROM SHARDA MEDICAL AGENCY TEAM.";
+
+  let appData = { parties: {}, notes: {}, dismissals: {}, directive: {}, adminPin: "1234", template: DEFAULT_TEMPLATE };
+  let consolidatedParties = [];
+  let billModal = null;
+  let noteModal = null;
+  let ptpReminderModal = null;
+  let isAdminAuthenticated = false;
+  let activeAlertOperator = "";
+
+  window.onload = function() {
+    billModal = new bootstrap.Modal(document.getElementById('billModal'));
+    noteModal = new bootstrap.Modal(document.getElementById('noteModal'));
+    ptpReminderModal = new bootstrap.Modal(document.getElementById('ptpReminderModal'));
+    fetchCloudData();
+  };
+
+  function getTodayString() {
+    const today = new Date();
+    const y = today.getFullYear();
+    const m = String(today.getMonth() + 1).padStart(2, '0');
+    const d = String(today.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  // 1. CLOUD SYNC
+  async function fetchCloudData() {
+    document.getElementById('syncStatus').innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i> Syncing...';
+
+    try {
+      const res = await fetch(CLOUD_API_URL);
+      const data = await res.json();
+      if (data && data.parties) {
+        appData = data;
+        if (!appData.dismissals) appData.dismissals = {};
+        if (!appData.directive) appData.directive = {};
+        if (!appData.adminPin) appData.adminPin = "1234";
+        if (!appData.template) appData.template = DEFAULT_TEMPLATE;
+        consolidatedParties = Object.values(appData.parties || {});
+      }
+      document.getElementById('syncStatus').innerHTML = '<i class="fa-solid fa-circle text-success me-1"></i> Cloud Synced (' + consolidatedParties.length + ' Parties)';
+      initSettingsInUI();
+      populateOperators();
+      renderParties();
+      renderDirectiveBanner();
+      checkTodayPTPAlert();
+    } catch (err) {
+      const local = localStorage.getItem('recovery_app_data');
+      if (local) {
+        appData = JSON.parse(local);
+        if (!appData.dismissals) appData.dismissals = {};
+        if (!appData.directive) appData.directive = {};
+        if (!appData.adminPin) appData.adminPin = "1234";
+        if (!appData.template) appData.template = DEFAULT_TEMPLATE;
+        consolidatedParties = Object.values(appData.parties || {});
+      }
+      document.getElementById('syncStatus').innerHTML = '<i class="fa-solid fa-circle text-primary me-1"></i> Ready';
+      initSettingsInUI();
+      populateOperators();
+      renderParties();
+      renderDirectiveBanner();
+      checkTodayPTPAlert();
+    }
+  }
+
+  function initSettingsInUI() {
+    document.getElementById('templateMsgInput').value = appData.template || DEFAULT_TEMPLATE;
+  }
+
+  // FEATURE 1: CHANGE ADMIN PIN
+  async function changeAdminPin() {
+    const newPin = document.getElementById('newAdminPinInput').value.trim();
+    if (!newPin || newPin.length < 3) {
+      alert('Kripya kam se kam 3 characters ka PIN dalein.');
+      return;
+    }
+
+    appData.adminPin = newPin;
+
+    const btn = document.getElementById('btnChangePin');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i> Saving...';
+
+    try {
+      await saveFullDataToCloud();
+      alert('Admin PIN safalta-purvak badal diya gaya hai! Naya PIN ab active hai.');
+      document.getElementById('newAdminPinInput').value = '';
+    } catch (e) {
+      alert('Error updating PIN: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fa-solid fa-key me-1"></i> Update PIN';
+    }
+  }
+
+  // FEATURE 2: SAVE WHATSAPP TEMPLATE
+  async function saveWhatsAppTemplate() {
+    const val = document.getElementById('templateMsgInput').value.trim();
+    if (!val) {
+      alert('Message template khali nahi ho sakta.');
+      return;
+    }
+
+    appData.template = val;
+
+    const btn = document.getElementById('btnSaveTemplate');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i> Saving...';
+
+    try {
+      await saveFullDataToCloud();
+      alert('WhatsApp template safalta-purvak update ho gaya! Sabhi operators ke WhatsApp buttons par ye apply ho chuka hai.');
+      renderParties();
+    } catch (e) {
+      alert('Error saving template: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fa-solid fa-floppy-disk me-1"></i> Save Message Template';
+    }
+  }
+
+  // Generate Personalized WhatsApp Message
+  function constructWhatsAppMessage(party) {
+    const tmpl = appData.template || DEFAULT_TEMPLATE;
+    return tmpl
+      .replace(/{party_name}/g, party.name)
+      .replace(/{code}/g, party.code)
+      .replace(/{balance}/g, Math.round(party.totalBal).toLocaleString('en-IN'))
+      .replace(/{oldest_date}/g, party.oldestDateStr)
+      .replace(/{operator}/g, party.operator);
+  }
+
+  async function saveFullDataToCloud() {
+    await fetch(CLOUD_API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(appData)
+    });
+    localStorage.setItem('recovery_app_data', JSON.stringify(appData));
+  }
+
+  function renderDirectiveBanner() {
+    const banner = document.getElementById('operatorInstructionBanner');
+    const dir = appData.directive;
+    const currentOp = document.getElementById('operatorSelect').value.trim().toUpperCase();
+
+    if (dir && dir.message) {
+      const isTargeted = (dir.target === 'ALL' || dir.target === currentOp || !currentOp);
+      if (isTargeted) {
+        banner.classList.remove('d-none');
+        banner.classList.add('d-flex');
+        document.getElementById('instructionTimestamp').innerText = dir.target === 'ALL' ? 'Broadcast to ALL' : `Target: ${dir.target}`;
+        document.getElementById('instructionMessageText').innerText = dir.message;
+        return;
+      }
+    }
+    banner.classList.remove('d-flex');
+    banner.classList.add('d-none');
+  }
+
+  async function publishDirectiveToCloud() {
+    const target = document.getElementById('dispatchTargetOp').value;
+    const msg = document.getElementById('dispatchDirectiveMsg').value.trim();
+
+    if (!msg) {
+      alert('Kripya instruction message type karein.');
+      return;
+    }
+
+    appData.directive = {
+      target: target,
+      message: msg,
+      timestamp: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+    };
+
+    const btn = document.getElementById('btnPublishDirective');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i> Publishing...';
+
+    try {
+      await saveFullDataToCloud();
+      alert(`Directive published successfully to ${target === 'ALL' ? 'All Operators' : target}!`);
+      renderDirectiveBanner();
+    } catch (e) {
+      alert('Error publishing directive: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fa-solid fa-cloud-arrow-up me-1"></i> Publish to Portal Banner';
+    }
+  }
+
+  function sendDirectiveViaWhatsApp() {
+    const target = document.getElementById('dispatchTargetOp').value;
+    const msg = document.getElementById('dispatchDirectiveMsg').value.trim();
+
+    if (!msg) {
+      alert('Kripya pehle instruction type karein.');
+      return;
+    }
+
+    const text = encodeURIComponent(`*ADMIN DIRECTIVE (${target}):*\n\n${msg}\n\n- Recovery Head`);
+    window.open(`https://wa.me/?text=${text}`, '_blank');
+  }
+
+  // Check Overdue + Today Alerts
+  function checkTodayPTPAlert() {
+    const todayStr = getTodayString();
+    const notes = appData.notes || {};
+    const dismissals = appData.dismissals || {};
+    const selectedOp = document.getElementById('operatorSelect').value.trim();
+
+    const opKey = selectedOp ? selectedOp.toUpperCase() : "ALL";
+    const isDismissedToday = (dismissals[opKey] === todayStr);
+
+    const banner = document.getElementById('todayAlertBanner');
+
+    if (isDismissedToday) {
+      banner.classList.remove('d-flex');
+      banner.classList.add('d-none');
+      return;
+    }
+
+    const pendingCommitmentParties = consolidatedParties.filter(p => {
+      const matchOp = !selectedOp || p.operator.toLowerCase() === selectedOp.toLowerCase();
+      const note = notes[p.code];
+      return matchOp && note && note.status === 'COMMITTED' && note.commitDate && (note.commitDate <= todayStr);
+    });
+
+    if (pendingCommitmentParties.length > 0) {
+      const uniqueOps = [...new Set(pendingCommitmentParties.map(p => p.operator))];
+      activeAlertOperator = selectedOp || (uniqueOps.length === 1 ? uniqueOps[0] : "MULTIPLE");
+
+      const todayCount = pendingCommitmentParties.filter(p => notes[p.code].commitDate === todayStr).length;
+      const overdueCount = pendingCommitmentParties.length - todayCount;
+
+      banner.classList.remove('d-none');
+      banner.classList.add('d-flex');
+      document.getElementById('alertBannerText').innerText = `🚨 Action Required: ${pendingCommitmentParties.length} Commitments Pending!`;
+      document.getElementById('alertBannerSubText').innerText = `Aaj: ${todayCount} | Missed (Past): ${overdueCount} | Assigned: ${selectedOp || uniqueOps.join(', ')}`;
+
+      if (sessionStorage.getItem('ptp_shown_' + opKey + '_' + todayStr) !== 'true') {
+        sessionStorage.setItem('ptp_shown_' + opKey + '_' + todayStr, 'true');
+        showAutoPTPModal(pendingCommitmentParties);
+      }
+    } else {
+      banner.classList.remove('d-flex');
+      banner.classList.add('d-none');
+    }
+  }
+
+  function showAutoPTPModal(parties) {
+    const todayStr = getTodayString();
+    const notes = appData.notes || {};
+    const listContainer = document.getElementById('ptpReminderList');
+    listContainer.innerHTML = '';
+    
+    parties.forEach(p => {
+      const note = notes[p.code] || {};
+      const isPast = note.commitDate < todayStr;
+      
+      let badgeHtml = isPast 
+        ? `<span class="badge bg-danger ms-1">MISSED: ${formatDateDisplay(note.commitDate)}</span>` 
+        : `<span class="badge bg-success ms-1">TODAY</span>`;
+
+      listContainer.innerHTML += `
+        <div class="list-group-item d-flex justify-content-between align-items-center py-2">
+          <div>
+            <div class="fw-bold text-dark">${p.name} ${badgeHtml}</div>
+            <small class="text-muted">${p.code} | Op: <strong class="text-primary">${p.operator}</strong></small>
+          </div>
+          <span class="badge bg-dark fs-6">₹${Math.round(p.totalBal).toLocaleString('en-IN')}</span>
+        </div>
+      `;
+    });
+
+    document.getElementById('ptpReminderMessage').innerText = `Pending Commitments List (${parties.length} Parties):`;
+    ptpReminderModal.show();
+  }
+
+  function formatDateDisplay(dStr) {
+    if (!dStr) return '-';
+    if (dStr.includes('-')) {
+      const dp = dStr.split('-');
+      return `${dp[2]}/${dp[1]}/${dp[0]}`;
+    }
+    return dStr;
+  }
+
+  function promptSatisfyAlert() {
+    ptpReminderModal.show();
+  }
+
+  async function confirmSatisfyAlert() {
+    const selectedOp = document.getElementById('operatorSelect').value.trim();
+    const todayStr = getTodayString();
+
+    if (!isAdminAuthenticated && !selectedOp) {
+      alert('Kripya pehle apna "Operator" select karein, taaki system verify kar sake ki ye action aapka hai.');
+      return;
+    }
+
+    if (!isAdminAuthenticated && activeAlertOperator !== "MULTIPLE" && selectedOp.toUpperCase() !== activeAlertOperator.toUpperCase()) {
+      alert(`Access Denied: Ye alert "${activeAlertOperator}" ke liye hai. Ise sirf wahi operator acknowledge kar sakta hai.`);
+      return;
+    }
+
+    const opKey = selectedOp ? selectedOp.toUpperCase() : "ALL";
+
+    if (!appData.dismissals) appData.dismissals = {};
+    appData.dismissals[opKey] = todayStr;
+
+    const btn = document.getElementById('btnSatisfyModal');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i> Updating Cloud...';
+
+    try {
+      await saveFullDataToCloud();
+      alert(`Success! Aaj ke din ke liye alert dismiss kar diya gaya hai (${selectedOp || 'Admin'}).`);
+      ptpReminderModal.hide();
+      checkTodayPTPAlert();
+    } catch (e) {
+      alert('Cloud Update Error: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fa-solid fa-circle-check me-1"></i> Yes, Noted & Action Taken (Close for Today)';
+    }
+  }
+
+  function filterTodayPTPFromModal() {
+    ptpReminderModal.hide();
+    setFilterDueAndPast();
+  }
+
+  function requestNotificationPermission() {
+    if ('Notification' in window) {
+      Notification.requestPermission().then(permission => {
+        if (permission === 'granted') {
+          alert('Mobile pop-up notifications enable ho gaye hain!');
+        } else {
+          alert('Notification permission allow karein.');
+        }
+      });
+    }
+  }
+
+  function onOperatorChange() {
+    renderParties();
+    renderDirectiveBanner();
+    checkTodayPTPAlert();
+  }
+
+  function parseDateInfo(val) {
+    if (!val && val !== 0) return { str: '-', ts: 9999999999999 };
+    if (val instanceof Date) {
+      return { str: `${val.getDate()}/${val.getMonth() + 1}/${val.getFullYear()}`, ts: val.getTime() };
+    }
+    const s = String(val).replace(/\x00/g, '').trim();
+    if (s.includes('/')) {
+      const p = s.split('/');
+      if (p.length === 3) {
+        const m = parseInt(p[0], 10) - 1;
+        const d = parseInt(p[1], 10);
+        let y = parseInt(p[2], 10);
+        if (y < 100) y += 2000;
+        const dt = new Date(y, m, d);
+        return { str: `${d}/${m + 1}/${y}`, ts: dt.getTime() };
+      }
+    }
+    if (s.includes('-')) {
+      const p = s.split('T')[0].split('-');
+      if (p.length === 3 && p[0].length === 4) {
+        const dt = new Date(parseInt(p[0], 10), parseInt(p[1], 10) - 1, parseInt(p[2], 10));
+        return { str: `${dt.getDate()}/${dt.getMonth() + 1}/${dt.getFullYear()}`, ts: dt.getTime() };
+      }
+    }
+    const num = parseFloat(s.replace(/[^0-9.]/g, ''));
+    if (!isNaN(num) && num > 30000 && num < 70000) {
+      const dt = new Date(Math.floor(num - 25569) * 86400 * 1000);
+      return { str: `${dt.getUTCDate()}/${dt.getUTCMonth() + 1}/${dt.getUTCFullYear()}`, ts: dt.getTime() };
+    }
+    return { str: s || '-', ts: 9999999999999 };
+  }
+
+  function handleFileUpload(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    document.getElementById('loader').classList.remove('d-none');
+    document.getElementById('loaderText').innerText = 'Reading ' + file.name + '...';
+
+    const reader = new FileReader();
+    reader.onload = async function(evt) {
+      try {
+        const data = new Uint8Array(evt.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: '', raw: false });
+
+        const processedParties = processRawRows(rows);
+
+        appData.parties = processedParties;
+        if (!appData.notes) appData.notes = {};
+        if (!appData.dismissals) appData.dismissals = {};
+        if (!appData.directive) appData.directive = {};
+        if (!appData.adminPin) appData.adminPin = "1234";
+        if (!appData.template) appData.template = DEFAULT_TEMPLATE;
+
+        await saveFullDataToCloud();
+        alert('File Cloud par update ho gayi!');
+        fetchCloudData();
+      } catch (err) {
+        alert('Upload Error: ' + err.message);
+      } finally {
+        document.getElementById('loader').classList.add('d-none');
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  function processRawRows(rows) {
+    const map = {};
+    rows.forEach(r => {
+      const clean = (val) => String(val || '').replace(/\x00/g, '').trim();
+      const code = clean(r.c_code);
+      const partyFullName = clean(r.c_group);
+      const operator = clean(r.c_cr1);
+      const address = clean(r.c_address1);
+      const balAmt = parseFloat(String(r.n_bal_amt).replace(/,/g, '')) || 0;
+      
+      let invNo = clean(r.n_srno);
+      if (invNo.endsWith('.0')) invNo = invNo.slice(0, -2);
+
+      const invDateInfo = parseDateInfo(r.d_date);
+      const dueDateInfo = parseDateInfo(r.d_due_date);
+
+      if (!code || balAmt <= 0) return;
+
+      const phoneMatches = address.match(/\d{10}/g);
+      const primaryPhone = phoneMatches ? phoneMatches[0] : '';
+
+      if (!map[code]) {
+        map[code] = {
+          code: code,
+          name: partyFullName,
+          operator: operator || 'UNASSIGNED',
+          phone: primaryPhone,
+          totalBal: 0,
+          oldestDateStr: invDateInfo.str,
+          oldestTimestamp: invDateInfo.ts,
+          bills: []
+        };
+      }
+
+      if (invDateInfo.ts < map[code].oldestTimestamp) {
+        map[code].oldestTimestamp = invDateInfo.ts;
+        map[code].oldestDateStr = invDateInfo.str;
+      }
+
+      map[code].totalBal += balAmt;
+      map[code].bills.push({
+        invNo: invNo,
+        balAmt: balAmt,
+        invDate: invDateInfo.str,
+        dueDate: dueDateInfo.str
+      });
+    });
+    return map;
+  }
+
+  function populateOperators() {
+    const ops = [...new Set(consolidatedParties.map(p => p.operator).filter(Boolean))].sort();
+    
+    const select = document.getElementById('operatorSelect');
+    select.innerHTML = '<option value="">-- Sabhi Parties --</option>';
+    ops.forEach(op => {
+      select.innerHTML += `<option value="${op}">FOLLOW UP: ${op}</option>`;
+    });
+
+    const dirSelect = document.getElementById('dispatchTargetOp');
+    dirSelect.innerHTML = '<option value="ALL">📢 BROADCAST TO ALL OPERATORS</option>';
+    ops.forEach(op => {
+      dirSelect.innerHTML += `<option value="${op}">👤 TARGET OPERATOR: ${op}</option>`;
+    });
+  }
+
+  function handleStatusFilterChange() {
+    const status = document.getElementById('statusFilter').value;
+    if (status !== 'COMMITTED') {
+      document.getElementById('ptpDateFilter').value = '';
+    }
+    renderParties();
+  }
+
+  function setFilterDateToday() {
+    document.getElementById('statusFilter').value = 'COMMITTED';
+    document.getElementById('ptpDateFilter').value = getTodayString();
+    renderParties();
+  }
+
+  function setFilterDueAndPast() {
+    document.getElementById('statusFilter').value = 'OVERDUE_AND_TODAY';
+    document.getElementById('ptpDateFilter').value = '';
+    renderParties();
+  }
+
+  function clearFilterDate() {
+    document.getElementById('ptpDateFilter').value = '';
+    renderParties();
+  }
+
+  // FEATURE 3: DYNAMIC SORTING (HIGHEST BALANCE VS OLDEST BILL)
+  function renderParties() {
+    const selectedOp = document.getElementById('operatorSelect').value.toLowerCase();
+    const selectedStatus = document.getElementById('statusFilter').value;
+    const selectedDate = document.getElementById('ptpDateFilter').value;
+    const sortPriority = document.getElementById('sortPrioritySelect').value;
+    const query = document.getElementById('searchInput').value.toLowerCase();
+    const container = document.getElementById('partiesContainer');
+    container.innerHTML = '';
+
+    const notes = appData.notes || {};
+    const todayStr = getTodayString();
+
+    let filtered = consolidatedParties.filter(p => {
+      const matchOp = !selectedOp || p.operator.toLowerCase() === selectedOp;
+      const matchSearch = p.name.toLowerCase().includes(query) || p.code.toLowerCase().includes(query);
+      
+      const currentNote = notes[p.code];
+      const partyStatus = currentNote ? currentNote.status : 'PENDING';
+      
+      let matchStatus = true;
+      if (selectedStatus === 'OVERDUE_AND_TODAY') {
+        matchStatus = (currentNote && currentNote.status === 'COMMITTED' && currentNote.commitDate && currentNote.commitDate <= todayStr);
+      } else if (selectedStatus) {
+        matchStatus = (partyStatus === selectedStatus);
+      }
+
+      let matchDate = true;
+      if (selectedDate) {
+        if (!currentNote || currentNote.status !== 'COMMITTED' || !currentNote.commitDate) {
+          matchDate = false;
+        } else {
+          matchDate = (currentNote.commitDate === selectedDate);
+        }
+      }
+
+      return matchOp && matchSearch && matchStatus && matchDate;
+    });
+
+    // Apply Sorting based on Priority Dropdown
+    if (sortPriority === 'OLDEST_BILL_ASC') {
+      filtered.sort((a, b) => a.oldestTimestamp - b.oldestTimestamp);
+    } else {
+      // Default: Highest Balance First
+      filtered.sort((a, b) => b.totalBal - a.totalBal);
+    }
+
+    let totalSum = 0;
+    filtered.forEach(p => totalSum += p.totalBal);
+
+    document.getElementById('totalCount').innerText = filtered.length;
+    document.getElementById('totalAmt').innerText = '₹' + Math.round(totalSum).toLocaleString('en-IN');
+
+    if (filtered.length === 0) {
+      container.innerHTML = '<div class="alert alert-light text-center py-4 text-muted">Koi accounts nahi mile.</div>';
+      return;
+    }
+
+    filtered.forEach((p, idx) => {
+      const phoneDigits = p.phone.replace(/\D/g, '').slice(-10);
+      const customWaMessage = constructWhatsAppMessage(p);
+      const waMsgEncoded = encodeURIComponent(customWaMessage);
+      const waLink = phoneDigits ? `https://wa.me/91${phoneDigits}?text=${waMsgEncoded}` : '#';
+      const telLink = phoneDigits ? `tel:${phoneDigits}` : '#';
+
+      const note = notes[p.code];
+      let statusBadge = `<span class="badge bg-light text-muted border">No Follow-up</span>`;
+      let isOverdueCard = false;
+
+      if (note) {
+        if (note.status === 'COMMITTED') {
+          const isPast = note.commitDate && (note.commitDate < todayStr);
+          const isToday = note.commitDate && (note.commitDate === todayStr);
+
+          if (isPast) {
+            isOverdueCard = true;
+            statusBadge = `<span class="badge bg-danger badge-status"><i class="fa-solid fa-triangle-exclamation me-1"></i>MISSED PTP: ${formatDateDisplay(note.commitDate)}</span>`;
+          } else if (isToday) {
+            statusBadge = `<span class="badge bg-success badge-status"><i class="fa-regular fa-calendar-check me-1"></i>PTP TODAY</span>`;
+          } else {
+            statusBadge = `<span class="badge bg-primary badge-status"><i class="fa-regular fa-calendar me-1"></i>PTP: ${formatDateDisplay(note.commitDate)}</span>`;
+          }
+        } else if (note.status === 'CALL_NOT_RECEIVED') {
+          statusBadge = `<span class="badge bg-warning text-dark badge-status"><i class="fa-solid fa-phone-slash me-1"></i>Not Received</span>`;
+        } else if (note.status === 'SERIOUS_ACTION') {
+          statusBadge = `<span class="badge bg-danger badge-status"><i class="fa-solid fa-triangle-exclamation me-1"></i>Serious Action</span>`;
+        } else if (note.status === 'DISPUTE') {
+          statusBadge = `<span class="badge bg-info text-dark badge-status"><i class="fa-solid fa-circle-question me-1"></i>Dispute</span>`;
+        } else {
+          statusBadge = `<span class="badge bg-secondary badge-status">${note.status}</span>`;
+        }
+      }
+
+      const card = `
+        <div class="card card-party ${isOverdueCard ? 'is-overdue' : ''} p-3">
+          <div class="d-flex justify-content-between align-items-start">
+            <div style="max-width: 65%;">
+              <span class="badge bg-secondary mb-1">${p.code}</span>
+              <span class="badge bg-light text-dark border mb-1">${p.operator}</span>
+              ${statusBadge}
+              
+              <h6 class="fw-bold mb-1 mt-1 text-dark text-truncate" title="${p.name}">${p.name}</h6>
+              
+              <div class="small text-danger fw-semibold">
+                <i class="fa-solid fa-calendar-xmark me-1"></i>Oldest Bill: ${p.oldestDateStr}
+              </div>
+
+              <div class="small text-muted">
+                <i class="fa-solid fa-phone me-1"></i>${phoneDigits ? phoneDigits : 'No Mobile Available'}
+              </div>
+
+              ${note && note.remark ? `<div class="small text-dark mt-1 bg-white p-2 rounded border"><strong>Remark:</strong> ${note.remark}</div>` : ''}
+            </div>
+
+            <div class="text-end">
+              <div class="amt-badge">₹${Math.round(p.totalBal).toLocaleString('en-IN')}</div>
+              <button class="btn btn-sm btn-link p-0 text-decoration-none" onclick="showBills('${p.code}')">
+                ${p.bills.length} Bill(s) <i class="fa-solid fa-chevron-right small"></i>
+              </button>
+            </div>
+          </div>
+
+          <hr class="my-2 text-muted">
+
+          <div class="d-flex justify-content-between align-items-center">
+            <div class="d-flex gap-2">
+              <a href="${telLink}" class="btn-circle bg-primary-subtle text-primary ${!phoneDigits ? 'disabled' : ''}">
+                <i class="fa-solid fa-phone"></i>
+              </a>
+              <a href="${waLink}" target="_blank" class="btn-circle bg-success text-white ${!phoneDigits ? 'disabled' : ''}" title="Send WhatsApp Template">
+                <i class="fa-brands fa-whatsapp"></i>
+              </a>
+            </div>
+            <button class="btn btn-sm btn-outline-primary px-3 fw-semibold" onclick="openNoteModal('${p.code}', '${p.name.replace(/'/g, "\\'")}')">
+              <i class="fa-regular fa-comment-dots me-1"></i> Note Update
+            </button>
+          </div>
+        </div>
+      `;
+      container.innerHTML += card;
+    });
+  }
+
+  function openNoteModal(code, name) {
+    document.getElementById('modalPartyCode').value = code;
+    document.getElementById('noteModalTitle').innerText = name + ' (' + code + ')';
+    
+    const existing = (appData.notes && appData.notes[code]) || {};
+    document.getElementById('modalStatusSelect').value = existing.status || 'COMMITTED';
+    document.getElementById('modalCommitDate').value = existing.commitDate || '';
+    document.getElementById('modalRemarkText').value = existing.remark || '';
+
+    toggleCommitDateField();
+    noteModal.show();
+  }
+
+  function toggleCommitDateField() {
+    const status = document.getElementById('modalStatusSelect').value;
+    document.getElementById('commitDateBox').style.display = (status === 'COMMITTED') ? 'block' : 'none';
+  }
+
+  async function saveFollowUpNote() {
+    const code = document.getElementById('modalPartyCode').value;
+    const status = document.getElementById('modalStatusSelect').value;
+    const commitDate = document.getElementById('modalCommitDate').value;
+    const remark = document.getElementById('modalRemarkText').value.trim();
+
+    if (!appData.notes) appData.notes = {};
+    appData.notes[code] = {
+      status: status,
+      commitDate: (status === 'COMMITTED') ? commitDate : '',
+      remark: remark,
+      updatedAt: new Date().toISOString()
+    };
+
+    const btn = document.getElementById('btnSaveNote');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i> Saving...';
+
+    try {
+      await saveFullDataToCloud();
+      noteModal.hide();
+      renderParties();
+      checkTodayPTPAlert();
+    } catch (e) {
+      alert('Error: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fa-solid fa-cloud-arrow-up me-1"></i> Save to Cloud';
+    }
+  }
+
+  function showBills(code) {
+    const party = consolidatedParties.find(p => p.code === code);
+    if (!party) return;
+
+    document.getElementById('billModalTitle').innerText = party.name + ' (' + party.code + ')';
+    
+    let html = `
+      <div class="table-responsive">
+        <table class="table table-sm table-bordered table-striped mb-0 text-center">
+          <thead class="table-dark">
+            <tr>
+              <th>Bill No</th>
+              <th>Bill Date</th>
+              <th>Due Date</th>
+              <th class="text-end">Balance</th>
+            </tr>
+          </thead>
+          <tbody>
+    `;
+
+    party.bills.forEach(b => {
+      html += `
+        <tr>
+          <td class="fw-bold text-dark">${b.invNo}</td>
+          <td>${b.invDate}</td>
+          <td>${b.dueDate}</td>
+          <td class="text-end fw-bold text-danger">₹${Math.round(b.balAmt).toLocaleString('en-IN')}</td>
+        </tr>
+      `;
+    });
+
+    html += `</tbody></table></div>`;
+    document.getElementById('billModalBody').innerHTML = html;
+    billModal.show();
+  }
+
+  function switchView(mode) {
+    if (mode === 'operator') {
+      document.getElementById('operatorViewSection').classList.remove('d-none');
+      document.getElementById('adminViewSection').classList.add('d-none');
+      document.getElementById('tab-operator').classList.add('active');
+      document.getElementById('tab-admin').classList.remove('active');
+    } else {
+      document.getElementById('operatorViewSection').classList.add('d-none');
+      document.getElementById('adminViewSection').classList.remove('d-none');
+      document.getElementById('tab-operator').classList.remove('active');
+      document.getElementById('tab-admin').classList.add('active');
+      renderAdminDashboard();
+    }
+  }
+
+  // Open Admin View with dynamic cloud PIN verification
+  function openAdminView() {
+    if (!isAdminAuthenticated) {
+      const storedPin = appData.adminPin || "1234";
+      const pin = prompt('Admin Access PIN dalein:');
+      if (pin === storedPin) {
+        isAdminAuthenticated = true;
+        switchView('admin');
+      } else {
+        alert('Galat PIN! Access Denied.');
+      }
+    } else {
+      switchView('admin');
+    }
+  }
+
+  // Render Admin Dashboard
+  function renderAdminDashboard() {
+    if (consolidatedParties.length === 0) return;
+
+    let overallSum = 0;
+    let totalBills = 0;
+    const opStats = {};
+
+    consolidatedParties.forEach(p => {
+      overallSum += p.totalBal;
+      totalBills += p.bills.length;
+      const op = p.operator;
+
+      if (!opStats[op]) {
+        opStats[op] = { name: op, count: 0, bills: 0, amount: 0 };
+      }
+      opStats[op].count += 1;
+      opStats[op].bills += p.bills.length;
+      opStats[op].amount += p.totalBal;
+    });
+
+    const opList = Object.values(opStats).sort((a, b) => b.amount - a.amount);
+
+    document.getElementById('admTotalAmt').innerText = '₹' + Math.round(overallSum).toLocaleString('en-IN');
+    document.getElementById('admTotalParties').innerText = consolidatedParties.length;
+    document.getElementById('admTotalOps').innerText = opList.length;
+
+    const tbody = document.getElementById('adminOperatorTableBody');
+    tbody.innerHTML = '';
+    opList.forEach(op => {
+      tbody.innerHTML += `
+        <tr>
+          <td>
+            <div class="fw-bold text-dark">${op.name}</div>
+            <small class="text-muted">Field Operator</small>
+          </td>
+          <td class="text-center font-monospace">${op.count}</td>
+          <td class="text-center font-monospace">${op.bills}</td>
+          <td class="text-end fw-bold text-danger font-monospace">₹${Math.round(op.amount).toLocaleString('en-IN')}</td>
+          <td class="text-center">
+            <button class="btn btn-sm btn-outline-primary py-1 px-3 fw-semibold" onclick="filterByAdminOp('${op.name}')">
+              <i class="fa-solid fa-arrow-up-right-from-square me-1"></i> Inspect
+            </button>
+          </td>
+        </tr>
+      `;
+    });
+  }
+
+  function filterByAdminOp(opName) {
+    switchView('operator');
+    document.getElementById('operatorSelect').value = opName;
+    renderParties();
+  }
+</script>
+</body>
+</html>
